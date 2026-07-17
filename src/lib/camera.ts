@@ -41,16 +41,12 @@ export type CameraTrackCapabilities = MediaTrackCapabilities & {
   focusMode?: string[];
   exposureMode?: string[];
   whiteBalanceMode?: string[];
-  torch?: boolean;
-  zoom?: MediaSettingsRange;
 };
 
 export type CameraTrackSettings = MediaTrackSettings & {
   focusMode?: string;
   exposureMode?: string;
   whiteBalanceMode?: string;
-  torch?: boolean;
-  zoom?: number;
 };
 
 export const BASE_CAMERA_CONSTRAINTS: MediaStreamConstraints = {
@@ -122,48 +118,6 @@ export async function optimizeTrackForCapture(
   } catch (err) {
     console.warn("[camera] applyConstraints failed (non-fatal):", err);
   }
-}
-
-export function trackSupportsTorch(track: MediaStreamTrack | null): boolean {
-  if (!track?.getCapabilities) return false;
-  const caps = track.getCapabilities() as CameraTrackCapabilities;
-  return caps.torch === true;
-}
-
-export async function setTorch(
-  track: MediaStreamTrack,
-  enabled: boolean
-): Promise<void> {
-  if (!trackSupportsTorch(track)) {
-    throw new Error("Torch is not supported on this camera");
-  }
-  await track.applyConstraints({
-    advanced: [{ torch: enabled } as MediaTrackConstraintSet],
-  });
-  console.log("[camera] Torch:", enabled);
-}
-
-export function getTrackZoomRange(
-  track: MediaStreamTrack | null
-): MediaSettingsRange | null {
-  if (!track?.getCapabilities) return null;
-  const caps = track.getCapabilities() as CameraTrackCapabilities;
-  if (!caps.zoom?.max || caps.zoom.max <= (caps.zoom.min ?? 1)) return null;
-  return caps.zoom;
-}
-
-export async function setZoom(
-  track: MediaStreamTrack,
-  zoom: number
-): Promise<void> {
-  const range = getTrackZoomRange(track);
-  if (!range?.max) throw new Error("Zoom is not supported on this camera");
-  const min = range.min ?? 1;
-  const clamped = Math.min(range.max, Math.max(min, zoom));
-  await track.applyConstraints({
-    advanced: [{ zoom: clamped } as MediaTrackConstraintSet],
-  });
-  console.log("[camera] Zoom:", clamped);
 }
 
 /**

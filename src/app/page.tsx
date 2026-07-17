@@ -6,13 +6,8 @@ import {
   BASE_CAMERA_CONSTRAINTS,
   captureHighResPhoto,
   describeTrack,
-  getTrackZoomRange,
   optimizeTrackForCapture,
-  setTorch,
-  setZoom,
   stopStream,
-  trackSupportsTorch,
-  type MediaSettingsRange,
 } from "@/lib/camera";
 import { uploadWeddingPhoto } from "@/lib/upload";
 
@@ -41,10 +36,6 @@ export default function WeddingCameraPage() {
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [trackInfo, setTrackInfo] = useState<string>("");
-  const [torchSupported, setTorchSupported] = useState(false);
-  const [torchOn, setTorchOn] = useState(false);
-  const [zoomRange, setZoomRange] = useState<MediaSettingsRange | null>(null);
-  const [zoom, setZoomValue] = useState(1);
   const [status, setStatus] = useState<CaptureStatus>("idle");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
@@ -66,8 +57,6 @@ export default function WeddingCameraPage() {
         videoRef.current.srcObject = null;
       }
       setCameraReady(false);
-      setTorchSupported(false);
-      setZoomRange(null);
       return;
     }
 
@@ -98,12 +87,6 @@ export default function WeddingCameraPage() {
         }
 
         setTrackInfo(describeTrack(track));
-        setTorchSupported(trackSupportsTorch(track ?? null));
-        setTorchOn(false);
-
-        const range = getTrackZoomRange(track ?? null);
-        setZoomRange(range);
-        setZoomValue(range?.min ?? 1);
 
         console.log("[camera] Stream ready:", describeTrack(track));
         setCameraReady(true);
@@ -124,32 +107,6 @@ export default function WeddingCameraPage() {
       streamRef.current = null;
     };
   }, [hydrated, limitReached]);
-
-  const handleTorchToggle = useCallback(async () => {
-    const track = streamRef.current?.getVideoTracks()[0];
-    if (!track) return;
-    const next = !torchOn;
-    try {
-      await setTorch(track, next);
-      setTorchOn(next);
-    } catch (err) {
-      console.warn("[camera] Torch toggle failed:", err);
-    }
-  }, [torchOn]);
-
-  const handleZoomChange = useCallback(
-    async (value: number) => {
-      const track = streamRef.current?.getVideoTracks()[0];
-      if (!track || !zoomRange) return;
-      setZoomValue(value);
-      try {
-        await setZoom(track, value);
-      } catch (err) {
-        console.warn("[camera] Zoom failed:", err);
-      }
-    },
-    [zoomRange]
-  );
 
   const handleCapture = useCallback(async () => {
     if (limitReached || status === "capturing" || status === "uploading") {
@@ -251,38 +208,10 @@ export default function WeddingCameraPage() {
             Starting camera…
           </div>
         )}
-        {torchSupported && (
-          <button
-            type="button"
-            onClick={handleTorchToggle}
-            disabled={!cameraReady}
-            className="absolute right-3 top-3 rounded-md bg-black/60 px-3 py-1.5 text-xs text-white disabled:opacity-50"
-          >
-            {torchOn ? "Torch on" : "Torch off"}
-          </button>
-        )}
       </div>
 
       {trackInfo && (
         <p className="text-xs text-zinc-400">Preview: {trackInfo}</p>
-      )}
-
-      {zoomRange?.max != null && (
-        <label className="flex flex-col gap-1 text-sm text-zinc-600">
-          <span>
-            Zoom: {zoom.toFixed(1)}×
-            {zoomRange.max ? ` (max ${zoomRange.max}×)` : ""}
-          </span>
-          <input
-            type="range"
-            min={zoomRange.min ?? 1}
-            max={zoomRange.max}
-            step={zoomRange.step ?? 0.1}
-            value={zoom}
-            onChange={(e) => handleZoomChange(Number(e.target.value))}
-            disabled={!cameraReady || isBusy}
-          />
-        </label>
       )}
 
       {cameraError && (
