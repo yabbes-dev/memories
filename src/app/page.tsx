@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { uploadWeddingPhoto } from "@/lib/upload";
 
@@ -270,6 +271,12 @@ export default function WeddingCameraPage() {
         <p className="text-sm text-zinc-500">
           You&apos;ve used all {MAX_UPLOADS} shots on this device.
         </p>
+        <Link
+          href="/gallery"
+          className="rounded-lg bg-zinc-900 px-4 py-3 text-base font-medium text-white"
+        >
+          View gallery
+        </Link>
       </main>
     );
   }
@@ -333,8 +340,15 @@ export default function WeddingCameraPage() {
             : "Capture"}
       </button>
 
+      <Link
+        href="/gallery"
+        className="rounded-lg border border-zinc-300 px-4 py-3 text-center text-base font-medium text-zinc-900"
+      >
+        View gallery
+      </Link>
+
       <p className="text-xs text-zinc-400">
-        Photos are taken in-app only — gallery uploads are disabled.
+        Photos are taken in-app only — device gallery uploads are disabled.
       </p>
     </main>
   );
