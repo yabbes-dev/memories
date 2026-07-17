@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { FilmPhoto } from "@/components/FilmPhoto";
 import { listWeddingPhotos, type WeddingPhoto } from "@/lib/gallery";
 
 export default function GalleryPage() {
@@ -82,12 +83,10 @@ export default function GalleryPage() {
             rel="noopener noreferrer"
             className="aspect-square overflow-hidden rounded-lg bg-zinc-100"
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
+            <FilmPhoto
               src={photo.url}
               alt={photo.name}
-              className="h-full w-full object-cover"
-              loading="lazy"
+              className="h-full w-full"
             />
           </a>
         ))}

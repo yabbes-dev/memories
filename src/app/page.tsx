@@ -2,19 +2,22 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  BASE_CAMERA_CONSTRAINTS,
+  captureHighResPhoto,
+  describeTrack,
+  getTrackZoomRange,
+  optimizeTrackForCapture,
+  setTorch,
+  setZoom,
+  stopStream,
+  trackSupportsTorch,
+  type MediaSettingsRange,
+} from "@/lib/camera";
 import { uploadWeddingPhoto } from "@/lib/upload";
 
 const MAX_UPLOADS = 30;
 const STORAGE_KEY = "wedding-photo-upload-count";
-
-const CAMERA_CONSTRAINTS: MediaStreamConstraints = {
-  video: {
-    facingMode: "environment",
-    width: { ideal: 3840 },
-    height: { ideal: 2160 },
-  },
-  audio: false,
-};
 
 type CaptureStatus = "idle" | "capturing" | "uploading" | "success" | "error";
 
@@ -29,98 +32,6 @@ function setStoredCount(count: number): void {
   localStorage.setItem(STORAGE_KEY, String(count));
 }
 
-/** ImageCapture is not in all TS DOM libs; narrow via runtime check. */
-interface ImageCaptureLike {
-  takePhoto: () => Promise<Blob>;
-}
-
-declare global {
-  interface Window {
-    ImageCapture?: new (track: MediaStreamTrack) => ImageCaptureLike;
-  }
-}
-
-async function captureHighResPhoto(
-  video: HTMLVideoElement,
-  stream: MediaStream
-): Promise<Blob> {
-  const [track] = stream.getVideoTracks();
-
-  if (typeof window !== "undefined" && window.ImageCapture && track) {
-    try {
-      const imageCapture = new window.ImageCapture(track);
-      const blob = await imageCapture.takePhoto();
-      console.log(
-        "[capture] ImageCapture.takePhoto() succeeded — hardware high-res blob",
-        blob.size,
-        blob.type
-      );
-      return blob;
-    } catch (err) {
-      console.warn(
-        "[capture] ImageCapture.takePhoto() failed, falling back to canvas:",
-        err
-      );
-    }
-  } else {
-    console.log(
-      "[capture] ImageCapture API unavailable — using canvas fallback"
-    );
-  }
-
-  return captureFromCanvas(video);
-}
-
-function captureFromCanvas(video: HTMLVideoElement): Promise<Blob> {
-  const width = video.videoWidth;
-  const height = video.videoHeight;
-
-  if (!width || !height) {
-    return Promise.reject(new Error("Video frame has no dimensions yet"));
-  }
-
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-
-  const ctx = canvas.getContext("2d");
-  if (!ctx) {
-    return Promise.reject(new Error("Could not get canvas 2d context"));
-  }
-
-  ctx.drawImage(video, 0, 0, width, height);
-
-  return new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (!blob) {
-          reject(new Error("canvas.toBlob() returned null"));
-          return;
-        }
-        console.log(
-          "[capture] Canvas fallback succeeded",
-          width,
-          "x",
-          height,
-          "size:",
-          blob.size
-        );
-        resolve(blob);
-      },
-      "image/jpeg",
-      0.92
-    );
-  });
-}
-
-function stopStream(stream: MediaStream | null): void {
-  if (!stream) return;
-  stream.getTracks().forEach((track) => {
-    track.stop();
-    console.log("[camera] Stopped track:", track.kind, track.label);
-  });
-}
-
 export default function WeddingCameraPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -129,19 +40,22 @@ export default function WeddingCameraPage() {
   const [hydrated, setHydrated] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [trackInfo, setTrackInfo] = useState<string>("");
+  const [torchSupported, setTorchSupported] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
+  const [zoomRange, setZoomRange] = useState<MediaSettingsRange | null>(null);
+  const [zoom, setZoomValue] = useState(1);
   const [status, setStatus] = useState<CaptureStatus>("idle");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
   const limitReached = uploadCount >= MAX_UPLOADS;
   const remaining = Math.max(0, MAX_UPLOADS - uploadCount);
 
-  // Hydrate upload count from localStorage
   useEffect(() => {
     setUploadCount(getStoredCount());
     setHydrated(true);
   }, []);
 
-  // Start / stop camera based on limit
   useEffect(() => {
     if (!hydrated) return;
 
@@ -152,6 +66,8 @@ export default function WeddingCameraPage() {
         videoRef.current.srcObject = null;
       }
       setCameraReady(false);
+      setTorchSupported(false);
+      setZoomRange(null);
       return;
     }
 
@@ -161,12 +77,17 @@ export default function WeddingCameraPage() {
       try {
         setCameraError(null);
         const stream = await navigator.mediaDevices.getUserMedia(
-          CAMERA_CONSTRAINTS
+          BASE_CAMERA_CONSTRAINTS
         );
 
         if (cancelled) {
           stopStream(stream);
           return;
+        }
+
+        const track = stream.getVideoTracks()[0];
+        if (track) {
+          await optimizeTrackForCapture(track);
         }
 
         streamRef.current = stream;
@@ -176,15 +97,15 @@ export default function WeddingCameraPage() {
           await video.play();
         }
 
-        const track = stream.getVideoTracks()[0];
-        const settings = track?.getSettings();
-        console.log("[camera] Stream started", {
-          label: track?.label,
-          width: settings?.width,
-          height: settings?.height,
-          facingMode: settings?.facingMode,
-        });
+        setTrackInfo(describeTrack(track));
+        setTorchSupported(trackSupportsTorch(track ?? null));
+        setTorchOn(false);
 
+        const range = getTrackZoomRange(track ?? null);
+        setZoomRange(range);
+        setZoomValue(range?.min ?? 1);
+
+        console.log("[camera] Stream ready:", describeTrack(track));
         setCameraReady(true);
       } catch (err) {
         console.error("[camera] getUserMedia failed:", err);
@@ -204,6 +125,32 @@ export default function WeddingCameraPage() {
     };
   }, [hydrated, limitReached]);
 
+  const handleTorchToggle = useCallback(async () => {
+    const track = streamRef.current?.getVideoTracks()[0];
+    if (!track) return;
+    const next = !torchOn;
+    try {
+      await setTorch(track, next);
+      setTorchOn(next);
+    } catch (err) {
+      console.warn("[camera] Torch toggle failed:", err);
+    }
+  }, [torchOn]);
+
+  const handleZoomChange = useCallback(
+    async (value: number) => {
+      const track = streamRef.current?.getVideoTracks()[0];
+      if (!track || !zoomRange) return;
+      setZoomValue(value);
+      try {
+        await setZoom(track, value);
+      } catch (err) {
+        console.warn("[camera] Zoom failed:", err);
+      }
+    },
+    [zoomRange]
+  );
+
   const handleCapture = useCallback(async () => {
     if (limitReached || status === "capturing" || status === "uploading") {
       return;
@@ -220,7 +167,7 @@ export default function WeddingCameraPage() {
 
     try {
       setStatus("capturing");
-      setStatusMessage("Capturing…");
+      setStatusMessage("Capturing at max photo resolution…");
 
       const blob = await captureHighResPhoto(video, stream);
 
@@ -240,7 +187,6 @@ export default function WeddingCameraPage() {
           : "Photo uploaded successfully!"
       );
 
-      // Clear success message after a short delay
       window.setTimeout(() => {
         setStatus("idle");
         setStatusMessage(null);
@@ -305,7 +251,39 @@ export default function WeddingCameraPage() {
             Starting camera…
           </div>
         )}
+        {torchSupported && (
+          <button
+            type="button"
+            onClick={handleTorchToggle}
+            disabled={!cameraReady}
+            className="absolute right-3 top-3 rounded-md bg-black/60 px-3 py-1.5 text-xs text-white disabled:opacity-50"
+          >
+            {torchOn ? "Torch on" : "Torch off"}
+          </button>
+        )}
       </div>
+
+      {trackInfo && (
+        <p className="text-xs text-zinc-400">Preview: {trackInfo}</p>
+      )}
+
+      {zoomRange?.max != null && (
+        <label className="flex flex-col gap-1 text-sm text-zinc-600">
+          <span>
+            Zoom: {zoom.toFixed(1)}×
+            {zoomRange.max ? ` (max ${zoomRange.max}×)` : ""}
+          </span>
+          <input
+            type="range"
+            min={zoomRange.min ?? 1}
+            max={zoomRange.max}
+            step={zoomRange.step ?? 0.1}
+            value={zoom}
+            onChange={(e) => handleZoomChange(Number(e.target.value))}
+            disabled={!cameraReady || isBusy}
+          />
+        </label>
+      )}
 
       {cameraError && (
         <p className="rounded border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800">
@@ -349,6 +327,8 @@ export default function WeddingCameraPage() {
 
       <p className="text-xs text-zinc-400">
         Photos are taken in-app only — device gallery uploads are disabled.
+        Stills use the max ImageCapture resolution when the browser supports
+        it.
       </p>
     </main>
   );
